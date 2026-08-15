@@ -2,6 +2,7 @@
 
 #include <wups.h>
 
+#include <coreinit/thread.h>
 #include <coreinit/time.h>
 #include <padscore/kpad.h>
 #include <padscore/wpad.h>
@@ -9,10 +10,8 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
-#include <sys/time.h>
 #include <unistd.h>
 
-#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -44,6 +43,12 @@ float NormalizeAxis(int16_t value) {
         return -1.0f;
     }
     return static_cast<float>(value) / 32767.0f;
+}
+
+int16_t ToWPADAxis(int16_t value) {
+    const float normalized = NormalizeAxis(value);
+    const float scaled = normalized < 0.0f ? normalized * 2048.0f : normalized * 2047.0f;
+    return static_cast<int16_t>(scaled);
 }
 
 bool ReadVirtualState(manette::State &out) {
@@ -99,11 +104,6 @@ void ReceiverLoop() {
     if (fd < 0) return;
     gSocket.store(fd);
 
-    timeval timeout{};
-    timeout.tv_sec = 0;
-    timeout.tv_usec = 100000;
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_port = htons(manette::kPort);
@@ -123,11 +123,14 @@ void ReceiverLoop() {
             fd,
             packet,
             sizeof(packet),
-            0,
+            MSG_DONTWAIT,
             reinterpret_cast<sockaddr *>(&sender),
             &senderLength);
 
-        if (received <= 0) continue;
+        if (received <= 0) {
+            OSSleepTicks(OSMillisecondsToTicks(2));
+            continue;
+        }
 
         manette::State decoded{};
         if (!DecodePacket(packet, static_cast<size_t>(received), decoded)) continue;
@@ -152,13 +155,14 @@ void StartReceiver() {
 
 void StopReceiver() {
     if (!gRunning.exchange(false)) return;
-    const int fd = gSocket.exchange(-1);
+    const int fd = gSocket.load();
     if (fd >= 0) {
         shutdown(fd, SHUT_RDWR);
     }
     if (gReceiverThread.joinable()) {
         gReceiverThread.join();
     }
+    gSocket.store(-1);
     {
         std::scoped_lock lock(gStateMutex);
         gState = {};
@@ -187,14 +191,15 @@ void FillKPADStatus(KPADStatus &status, const manette::State &state) {
 
 void FillWPADStatus(WPADStatusProController &status, const manette::State &state) {
     std::memset(&status, 0, sizeof(status));
-    status.err = 0;
-    status.extensionType = WPAD_EXT_PRO_CONTROLLER;
-    status.dataFormat = WPAD_FMT_PRO_CONTROLLER;
+    status.core.error = 0;
+    status.core.extensionType = WPAD_EXT_PRO_CONTROLLER;
     status.buttons = ToProButtons(state.buttons);
-    status.leftStick.x = state.leftX;
-    status.leftStick.y = state.leftY;
-    status.rightStick.x = state.rightX;
-    status.rightStick.y = state.rightY;
+    status.leftStick.x = ToWPADAxis(state.leftX);
+    status.leftStick.y = ToWPADAxis(state.leftY);
+    status.rightStick.x = ToWPADAxis(state.rightX);
+    status.rightStick.y = ToWPADAxis(state.rightY);
+    status.charging = false;
+    status.wired = false;
 }
 } // namespace
 
@@ -215,7 +220,10 @@ DEINITIALIZE_PLUGIN() {
 
 DECL_FUNCTION(int32_t, KPADReadEx, KPADChan channel, KPADStatus *data, uint32_t size, KPADError *outError) {
     manette::State state{};
-    if (static_cast<int>(channel) != 0 || !ReadVirtualState(state)) {
+    if (static_cast<int>(channel) != 0) {
+        return real_KPADReadEx(channel, data, size, outError);
+    }
+    if (!ReadVirtualState(state)) {
         gPreviousProButtons = 0;
         return real_KPADReadEx(channel, data, size, outError);
     }
