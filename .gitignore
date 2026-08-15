@@ -1,0 +1,10 @@
+.gradle/
+.idea/
+*.iml
+local.properties
+android/app/build/
+build/
+wiiu/build/
+wiiu/*.elf
+wiiu/*.wps
+.DS_Store
