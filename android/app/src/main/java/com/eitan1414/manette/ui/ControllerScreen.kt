@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,7 +39,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerId
-import androidx.compose.ui.input.pointer.consume
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -285,7 +283,7 @@ private fun AnalogStickControl(
 
                 fun update(position: Offset) {
                     val center = Offset(size.width / 2f, size.height / 2f)
-                    val radius = size.minDimension / 2f
+                    val radius = minOf(size.width, size.height).toFloat() / 2f
                     var dx = (position.x - center.x) / radius
                     var dy = (position.y - center.y) / radius
                     val magnitude = hypot(dx, dy)
