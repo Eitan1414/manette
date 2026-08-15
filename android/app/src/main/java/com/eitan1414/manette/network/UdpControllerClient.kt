@@ -52,7 +52,7 @@ class UdpControllerClient : AutoCloseable {
             .order(ByteOrder.BIG_ENDIAN)
             .putInt(MAGIC)
             .put(PROTOCOL_VERSION)
-            .put(0) // player 1 / channel 0
+            .put(0.toByte()) // player 1 / channel 0
             .putShort(seq.toShort())
             .putInt(state.buttons)
             .putShort(state.leftX)
