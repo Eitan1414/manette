@@ -20,7 +20,7 @@
 
 WUPS_PLUGIN_NAME("Manette");
 WUPS_PLUGIN_DESCRIPTION("Android tablet to virtual Wii U Pro Controller");
-WUPS_PLUGIN_VERSION("0.1.0");
+WUPS_PLUGIN_VERSION("0.2.0");
 WUPS_PLUGIN_AUTHOR("Eitan1414 / OpenAI");
 WUPS_PLUGIN_LICENSE("MIT");
 
@@ -33,15 +33,14 @@ std::thread gReceiverThread;
 std::mutex gStateMutex;
 manette::State gState;
 uint32_t gPreviousProButtons = 0;
+int gPreviousChannel = -1;
 
 uint64_t NowMs() {
     return OSTicksToMilliseconds(OSGetTime());
 }
 
 float NormalizeAxis(int16_t value) {
-    if (value == INT16_MIN) {
-        return -1.0f;
-    }
+    if (value == INT16_MIN) return -1.0f;
     return static_cast<float>(value) / 32767.0f;
 }
 
@@ -53,11 +52,17 @@ int16_t ToWPADAxis(int16_t value) {
 
 bool ReadVirtualState(manette::State &out) {
     std::scoped_lock lock(gStateMutex);
-    if (gState.lastPacketMs == 0 || NowMs() - gState.lastPacketMs > manette::kTimeoutMs) {
-        return false;
-    }
+    if (gState.lastPacketMs == 0 || NowMs() - gState.lastPacketMs > manette::kTimeoutMs) return false;
     out = gState;
     return true;
+}
+
+bool IsVirtualChannel(KPADChan channel, const manette::State &state) {
+    return static_cast<int>(channel) == static_cast<int>(state.channel);
+}
+
+bool IsVirtualChannel(WPADChan channel, const manette::State &state) {
+    return static_cast<int>(channel) == static_cast<int>(state.channel);
 }
 
 uint32_t ToProButtons(uint32_t buttons) {
@@ -88,8 +93,10 @@ bool DecodePacket(const uint8_t *data, size_t size, manette::State &state) {
     if (size != manette::kPacketSize) return false;
     if (manette::ReadU32BE(data) != manette::kMagic) return false;
     if (data[4] != manette::kProtocolVersion) return false;
-    if (data[5] != 0) return false; // V0.1: player 1 only
+    if (data[5] > 6) return false;
 
+    state.channel = data[5];
+    state.sequence = manette::ReadU16BE(data + 6);
     state.buttons = manette::ReadU32BE(data + 8);
     state.leftX = manette::ReadS16BE(data + 12);
     state.leftY = manette::ReadS16BE(data + 14);
@@ -97,6 +104,15 @@ bool DecodePacket(const uint8_t *data, size_t size, manette::State &state) {
     state.rightY = manette::ReadS16BE(data + 18);
     state.lastPacketMs = NowMs();
     return true;
+}
+
+void SendAck(int fd, const sockaddr_in &sender, socklen_t senderLength, const manette::State &state) {
+    uint8_t ack[manette::kAckSize]{};
+    manette::WriteU32BE(ack, manette::kAckMagic);
+    ack[4] = manette::kProtocolVersion;
+    ack[5] = state.channel;
+    manette::WriteU16BE(ack + 6, state.sequence);
+    sendto(fd, ack, sizeof(ack), 0, reinterpret_cast<const sockaddr *>(&sender), senderLength);
 }
 
 void ReceiverLoop() {
@@ -119,13 +135,8 @@ void ReceiverLoop() {
     while (gRunning.load()) {
         sockaddr_in sender{};
         socklen_t senderLength = sizeof(sender);
-        const int received = recvfrom(
-            fd,
-            packet,
-            sizeof(packet),
-            MSG_DONTWAIT,
-            reinterpret_cast<sockaddr *>(&sender),
-            &senderLength);
+        const int received = recvfrom(fd, packet, sizeof(packet), MSG_DONTWAIT,
+                                      reinterpret_cast<sockaddr *>(&sender), &senderLength);
 
         if (received <= 0) {
             OSSleepTicks(OSMillisecondsToTicks(2));
@@ -135,8 +146,15 @@ void ReceiverLoop() {
         manette::State decoded{};
         if (!DecodePacket(packet, static_cast<size_t>(received), decoded)) continue;
 
-        std::scoped_lock lock(gStateMutex);
-        gState = decoded; // latest packet wins; no queue
+        {
+            std::scoped_lock lock(gStateMutex);
+            if (gState.channel != decoded.channel) {
+                gPreviousProButtons = 0;
+                gPreviousChannel = decoded.channel;
+            }
+            gState = decoded;
+        }
+        SendAck(fd, sender, senderLength, decoded);
     }
 
     close(fd);
@@ -150,28 +168,31 @@ void StartReceiver() {
         gState = {};
     }
     gPreviousProButtons = 0;
+    gPreviousChannel = -1;
     gReceiverThread = std::thread(ReceiverLoop);
 }
 
 void StopReceiver() {
     if (!gRunning.exchange(false)) return;
     const int fd = gSocket.load();
-    if (fd >= 0) {
-        shutdown(fd, SHUT_RDWR);
-    }
-    if (gReceiverThread.joinable()) {
-        gReceiverThread.join();
-    }
+    if (fd >= 0) shutdown(fd, SHUT_RDWR);
+    if (gReceiverThread.joinable()) gReceiverThread.join();
     gSocket.store(-1);
     {
         std::scoped_lock lock(gStateMutex);
         gState = {};
     }
     gPreviousProButtons = 0;
+    gPreviousChannel = -1;
 }
 
 void FillKPADStatus(KPADStatus &status, const manette::State &state) {
     std::memset(&status, 0, sizeof(status));
+    if (gPreviousChannel != static_cast<int>(state.channel)) {
+        gPreviousProButtons = 0;
+        gPreviousChannel = state.channel;
+    }
+
     const uint32_t hold = ToProButtons(state.buttons);
     status.pro.hold = hold;
     status.pro.trigger = hold & ~gPreviousProButtons;
@@ -203,8 +224,7 @@ void FillWPADStatus(WPADStatusProController &status, const manette::State &state
 }
 } // namespace
 
-INITIALIZE_PLUGIN() {
-}
+INITIALIZE_PLUGIN() {}
 
 ON_APPLICATION_START() {
     StartReceiver();
@@ -220,11 +240,8 @@ DEINITIALIZE_PLUGIN() {
 
 DECL_FUNCTION(int32_t, KPADReadEx, KPADChan channel, KPADStatus *data, uint32_t size, KPADError *outError) {
     manette::State state{};
-    if (static_cast<int>(channel) != 0) {
-        return real_KPADReadEx(channel, data, size, outError);
-    }
-    if (!ReadVirtualState(state)) {
-        gPreviousProButtons = 0;
+    if (!ReadVirtualState(state) || !IsVirtualChannel(channel, state)) {
+        if (!ReadVirtualState(state)) gPreviousProButtons = 0;
         return real_KPADReadEx(channel, data, size, outError);
     }
 
@@ -245,7 +262,7 @@ DECL_FUNCTION(int32_t, KPADRead, KPADChan channel, KPADStatus *data, uint32_t si
 
 DECL_FUNCTION(int32_t, WPADProbe, WPADChan channel, WPADExtensionType *outExtensionType) {
     manette::State state{};
-    if (static_cast<int>(channel) != 0 || !ReadVirtualState(state)) {
+    if (!ReadVirtualState(state) || !IsVirtualChannel(channel, state)) {
         return real_WPADProbe(channel, outExtensionType);
     }
     if (outExtensionType) *outExtensionType = WPAD_EXT_PRO_CONTROLLER;
@@ -254,7 +271,7 @@ DECL_FUNCTION(int32_t, WPADProbe, WPADChan channel, WPADExtensionType *outExtens
 
 DECL_FUNCTION(void, WPADRead, WPADChan channel, void *buffer) {
     manette::State state{};
-    if (static_cast<int>(channel) != 0 || !ReadVirtualState(state) || buffer == nullptr) {
+    if (!ReadVirtualState(state) || !IsVirtualChannel(channel, state) || buffer == nullptr) {
         real_WPADRead(channel, buffer);
         return;
     }
@@ -263,7 +280,7 @@ DECL_FUNCTION(void, WPADRead, WPADChan channel, void *buffer) {
 
 DECL_FUNCTION(WPADDataFormat, WPADGetDataFormat, WPADChan channel) {
     manette::State state{};
-    if (static_cast<int>(channel) != 0 || !ReadVirtualState(state)) {
+    if (!ReadVirtualState(state) || !IsVirtualChannel(channel, state)) {
         return real_WPADGetDataFormat(channel);
     }
     return WPAD_FMT_PRO_CONTROLLER;
@@ -271,7 +288,7 @@ DECL_FUNCTION(WPADDataFormat, WPADGetDataFormat, WPADChan channel) {
 
 DECL_FUNCTION(uint8_t, WPADGetBatteryLevel, WPADChan channel) {
     manette::State state{};
-    if (static_cast<int>(channel) != 0 || !ReadVirtualState(state)) {
+    if (!ReadVirtualState(state) || !IsVirtualChannel(channel, state)) {
         return real_WPADGetBatteryLevel(channel);
     }
     return 4;
@@ -279,10 +296,9 @@ DECL_FUNCTION(uint8_t, WPADGetBatteryLevel, WPADChan channel) {
 
 DECL_FUNCTION(void, WPADControlMotor, WPADChan channel, BOOL enabled) {
     manette::State state{};
-    if (static_cast<int>(channel) != 0 || !ReadVirtualState(state)) {
+    if (!ReadVirtualState(state) || !IsVirtualChannel(channel, state)) {
         real_WPADControlMotor(channel, enabled);
     }
-    // V0.1: rumble return path to Android will be added later.
 }
 
 WUPS_MUST_REPLACE(KPADReadEx, WUPS_LOADER_LIBRARY_PADSCORE, KPADReadEx);
