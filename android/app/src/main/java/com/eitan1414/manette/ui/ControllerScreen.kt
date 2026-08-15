@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -208,7 +209,7 @@ private fun ControllerButtonControl(
                 val down = awaitFirstDown(requireUnconsumed = false)
                 down.consume()
                 onPressed(true)
-                var pointerId: PointerId = down.id
+                val pointerId: PointerId = down.id
                 do {
                     val event = awaitPointerEvent()
                     val change = event.changes.firstOrNull { it.id == pointerId } ?: break
