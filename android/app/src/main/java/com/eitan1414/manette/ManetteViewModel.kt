@@ -6,7 +6,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import com.eitan1414.manette.data.LayoutRepository
-import com.eitan1414.manette.model.ControlPlacement
 import com.eitan1414.manette.model.ControllerButton
 import com.eitan1414.manette.model.DefaultLayout
 import com.eitan1414.manette.model.InputSnapshot
@@ -45,7 +44,7 @@ class ManetteViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun setEditMode(enabled: Boolean) {
+    fun changeEditMode(enabled: Boolean) {
         editMode = enabled
         if (!enabled) {
             selectedControlId = null
