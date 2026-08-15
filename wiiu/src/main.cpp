@@ -57,12 +57,8 @@ bool ReadVirtualState(manette::State &out) {
     return true;
 }
 
-bool IsVirtualChannel(KPADChan channel, const manette::State &state) {
-    return static_cast<int>(channel) == static_cast<int>(state.channel);
-}
-
-bool IsVirtualChannel(WPADChan channel, const manette::State &state) {
-    return static_cast<int>(channel) == static_cast<int>(state.channel);
+bool IsVirtualChannel(int channel, const manette::State &state) {
+    return channel == static_cast<int>(state.channel);
 }
 
 uint32_t ToProButtons(uint32_t buttons) {
@@ -240,8 +236,9 @@ DEINITIALIZE_PLUGIN() {
 
 DECL_FUNCTION(int32_t, KPADReadEx, KPADChan channel, KPADStatus *data, uint32_t size, KPADError *outError) {
     manette::State state{};
-    if (!ReadVirtualState(state) || !IsVirtualChannel(channel, state)) {
-        if (!ReadVirtualState(state)) gPreviousProButtons = 0;
+    const bool connected = ReadVirtualState(state);
+    if (!connected || !IsVirtualChannel(static_cast<int>(channel), state)) {
+        if (!connected) gPreviousProButtons = 0;
         return real_KPADReadEx(channel, data, size, outError);
     }
 
@@ -262,7 +259,7 @@ DECL_FUNCTION(int32_t, KPADRead, KPADChan channel, KPADStatus *data, uint32_t si
 
 DECL_FUNCTION(int32_t, WPADProbe, WPADChan channel, WPADExtensionType *outExtensionType) {
     manette::State state{};
-    if (!ReadVirtualState(state) || !IsVirtualChannel(channel, state)) {
+    if (!ReadVirtualState(state) || !IsVirtualChannel(static_cast<int>(channel), state)) {
         return real_WPADProbe(channel, outExtensionType);
     }
     if (outExtensionType) *outExtensionType = WPAD_EXT_PRO_CONTROLLER;
@@ -271,7 +268,7 @@ DECL_FUNCTION(int32_t, WPADProbe, WPADChan channel, WPADExtensionType *outExtens
 
 DECL_FUNCTION(void, WPADRead, WPADChan channel, void *buffer) {
     manette::State state{};
-    if (!ReadVirtualState(state) || !IsVirtualChannel(channel, state) || buffer == nullptr) {
+    if (!ReadVirtualState(state) || !IsVirtualChannel(static_cast<int>(channel), state) || buffer == nullptr) {
         real_WPADRead(channel, buffer);
         return;
     }
@@ -280,7 +277,7 @@ DECL_FUNCTION(void, WPADRead, WPADChan channel, void *buffer) {
 
 DECL_FUNCTION(WPADDataFormat, WPADGetDataFormat, WPADChan channel) {
     manette::State state{};
-    if (!ReadVirtualState(state) || !IsVirtualChannel(channel, state)) {
+    if (!ReadVirtualState(state) || !IsVirtualChannel(static_cast<int>(channel), state)) {
         return real_WPADGetDataFormat(channel);
     }
     return WPAD_FMT_PRO_CONTROLLER;
@@ -288,7 +285,7 @@ DECL_FUNCTION(WPADDataFormat, WPADGetDataFormat, WPADChan channel) {
 
 DECL_FUNCTION(uint8_t, WPADGetBatteryLevel, WPADChan channel) {
     manette::State state{};
-    if (!ReadVirtualState(state) || !IsVirtualChannel(channel, state)) {
+    if (!ReadVirtualState(state) || !IsVirtualChannel(static_cast<int>(channel), state)) {
         return real_WPADGetBatteryLevel(channel);
     }
     return 4;
@@ -296,7 +293,7 @@ DECL_FUNCTION(uint8_t, WPADGetBatteryLevel, WPADChan channel) {
 
 DECL_FUNCTION(void, WPADControlMotor, WPADChan channel, BOOL enabled) {
     manette::State state{};
-    if (!ReadVirtualState(state) || !IsVirtualChannel(channel, state)) {
+    if (!ReadVirtualState(state) || !IsVirtualChannel(static_cast<int>(channel), state)) {
         real_WPADControlMotor(channel, enabled);
     }
 }
