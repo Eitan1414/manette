@@ -56,8 +56,15 @@ class LayoutRepository(context: Context) {
         prefs.edit().putString(KEY_IP, ip).apply()
     }
 
+    fun loadChannel(): Int = prefs.getInt(KEY_CHANNEL, 0).coerceIn(0, 6)
+
+    fun saveChannel(channel: Int) {
+        prefs.edit().putInt(KEY_CHANNEL, channel.coerceIn(0, 6)).apply()
+    }
+
     companion object {
         private const val KEY_LAYOUT = "controller_layout_v1"
         private const val KEY_IP = "wiiu_ip"
+        private const val KEY_CHANNEL = "wiiu_pro_channel"
     }
 }
