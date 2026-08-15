@@ -65,6 +65,8 @@ fun ManetteScreen(viewModel: ManetteViewModel) {
             TopBar(
                 ip = viewModel.targetIp,
                 configured = viewModel.networkConfigured,
+                confirmed = viewModel.networkConfirmed,
+                channel = viewModel.selectedChannel,
                 editMode = viewModel.editMode,
                 onConnection = { showConnectionDialog = true },
                 onEdit = { viewModel.changeEditMode(!viewModel.editMode) }
@@ -86,9 +88,10 @@ fun ManetteScreen(viewModel: ManetteViewModel) {
     if (showConnectionDialog) {
         ConnectionDialog(
             initialIp = viewModel.targetIp,
+            initialChannel = viewModel.selectedChannel,
             onDismiss = { showConnectionDialog = false },
-            onConnect = {
-                viewModel.connect(it)
+            onConnect = { ip, channel ->
+                viewModel.connect(ip, channel)
                 showConnectionDialog = false
             }
         )
@@ -99,6 +102,8 @@ fun ManetteScreen(viewModel: ManetteViewModel) {
 private fun TopBar(
     ip: String,
     configured: Boolean,
+    confirmed: Boolean,
+    channel: Int,
     editMode: Boolean,
     onConnection: () -> Unit,
     onEdit: () -> Unit
@@ -113,11 +118,23 @@ private fun TopBar(
         ) {
             Text("MANETTE", fontWeight = FontWeight.Black, fontSize = 19.sp)
             Spacer(Modifier.width(16.dp))
-            Text(
-                if (configured) "● Wii U : $ip" else "○ Wii U non configurée",
-                color = if (configured) Color(0xFF8BE39B) else MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 13.sp
-            )
+
+            val statusText = when {
+                confirmed -> "● Wii U reçoit · canal $channel"
+                configured -> "● En attente Wii U · canal $channel"
+                else -> "○ Wii U non configurée"
+            }
+            val statusColor = when {
+                confirmed -> Color(0xFF8BE39B)
+                configured -> Color(0xFFFFC267)
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+
+            Text(statusText, color = statusColor, fontSize = 13.sp)
+            if (configured && ip.isNotBlank()) {
+                Spacer(Modifier.width(8.dp))
+                Text(ip, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+            }
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onConnection) { Text("CONNEXION") }
             Button(
@@ -377,10 +394,12 @@ private fun CustomizationPanel(viewModel: ManetteViewModel, modifier: Modifier =
 @Composable
 private fun ConnectionDialog(
     initialIp: String,
+    initialChannel: Int,
     onDismiss: () -> Unit,
-    onConnect: (String) -> Unit
+    onConnect: (String, Int) -> Unit
 ) {
     var ip by remember(initialIp) { mutableStateOf(initialIp) }
+    var channel by remember(initialChannel) { mutableStateOf(initialChannel.toFloat()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -396,12 +415,24 @@ private fun ConnectionDialog(
                     placeholder = { Text("192.168.1.42") },
                     singleLine = true
                 )
+                Spacer(Modifier.height(12.dp))
+                Text("Canal Pro Controller : ${channel.roundToInt()}", fontWeight = FontWeight.Bold)
+                Slider(
+                    value = channel,
+                    onValueChange = { channel = it },
+                    valueRange = 0f..6f,
+                    steps = 5
+                )
+                Text(
+                    "Si la Wii U répond mais qu'un jeu ne détecte pas la manette, essayez un autre canal.",
+                    style = MaterialTheme.typography.bodySmall
+                )
                 Spacer(Modifier.height(8.dp))
-                Text("UDP : 4405", style = MaterialTheme.typography.bodySmall)
+                Text("UDP : 4405 · protocole v2", style = MaterialTheme.typography.bodySmall)
             }
         },
         confirmButton = {
-            Button(onClick = { onConnect(ip) }) { Text("CONNECTER") }
+            Button(onClick = { onConnect(ip, channel.roundToInt()) }) { Text("CONNECTER") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("ANNULER") }
