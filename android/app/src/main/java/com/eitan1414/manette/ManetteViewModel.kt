@@ -1,6 +1,9 @@
 package com.eitan1414.manette
 
 import android.app.Application
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -14,8 +17,19 @@ import kotlin.math.roundToInt
 
 class ManetteViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = LayoutRepository(application)
-    private val network = UdpControllerClient()
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val inputLock = Any()
+
+    private var lastAckAtMs = 0L
+
+    private val network = UdpControllerClient { ackChannel ->
+        mainHandler.post {
+            if (ackChannel == selectedChannel) {
+                lastAckAtMs = SystemClock.elapsedRealtime()
+                networkConfirmed = true
+            }
+        }
+    }
 
     var layout by mutableStateOf(repository.loadLayout())
         private set
@@ -29,7 +43,13 @@ class ManetteViewModel(application: Application) : AndroidViewModel(application)
     var targetIp by mutableStateOf(repository.loadIp())
         private set
 
+    var selectedChannel by mutableStateOf(repository.loadChannel())
+        private set
+
     var networkConfigured by mutableStateOf(false)
+        private set
+
+    var networkConfirmed by mutableStateOf(false)
         private set
 
     private var buttons = 0
@@ -38,10 +58,21 @@ class ManetteViewModel(application: Application) : AndroidViewModel(application)
     private var rightX: Short = 0
     private var rightY: Short = 0
 
+    private val connectionWatch = object : Runnable {
+        override fun run() {
+            val age = SystemClock.elapsedRealtime() - lastAckAtMs
+            if (lastAckAtMs == 0L || age > 1000L) {
+                networkConfirmed = false
+            }
+            mainHandler.postDelayed(this, 250L)
+        }
+    }
+
     init {
         if (targetIp.isNotBlank()) {
-            networkConfigured = network.configure(targetIp)
+            networkConfigured = network.configure(targetIp, selectedChannel)
         }
+        mainHandler.post(connectionWatch)
     }
 
     fun changeEditMode(enabled: Boolean) {
@@ -81,8 +112,16 @@ class ManetteViewModel(application: Application) : AndroidViewModel(application)
         selectedControlId = null
     }
 
-    fun connect(ip: String): Boolean {
+    fun connect(ip: String, channel: Int): Boolean {
         val normalized = ip.trim()
+        val normalizedChannel = channel.coerceIn(0, 6)
+
+        selectedChannel = normalizedChannel
+        repository.saveChannel(normalizedChannel)
+        network.setChannel(normalizedChannel)
+        lastAckAtMs = 0L
+        networkConfirmed = false
+
         if (normalized.isBlank()) {
             network.clearTarget()
             targetIp = ""
@@ -90,7 +129,8 @@ class ManetteViewModel(application: Application) : AndroidViewModel(application)
             networkConfigured = false
             return false
         }
-        val ok = network.configure(normalized)
+
+        val ok = network.configure(normalized, normalizedChannel)
         if (ok) {
             targetIp = normalized
             repository.saveIp(normalized)
@@ -130,6 +170,7 @@ class ManetteViewModel(application: Application) : AndroidViewModel(application)
     }
 
     override fun onCleared() {
+        mainHandler.removeCallbacks(connectionWatch)
         network.close()
         super.onCleared()
     }
