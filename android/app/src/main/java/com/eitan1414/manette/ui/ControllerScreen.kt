@@ -67,7 +67,7 @@ fun ManetteScreen(viewModel: ManetteViewModel) {
                 configured = viewModel.networkConfigured,
                 editMode = viewModel.editMode,
                 onConnection = { showConnectionDialog = true },
-                onEdit = { viewModel.setEditMode(!viewModel.editMode) }
+                onEdit = { viewModel.changeEditMode(!viewModel.editMode) }
             )
 
             ControllerArea(viewModel, Modifier.weight(1f))
